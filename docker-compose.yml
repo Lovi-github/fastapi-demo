@@ -8,3 +8,30 @@ services:
     user: root
     ports:
       - "8000:8000"
+    depends_on:
+      - redis
+    networks:
+      - fast-api-network
+
+  worker:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    restart: always
+    command: rq worker --url redis://redis:6379 default
+    depends_on:
+      - redis
+      - app
+    links:
+      - redis
+    networks:
+      - fast-api-network
+
+  redis:
+    image: "redis:alpine"
+    restart: always
+    networks:
+      - fast-api-network
+
+networks:
+  fast-api-network:
