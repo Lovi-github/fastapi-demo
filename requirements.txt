@@ -7,3 +7,6 @@ python-jose[cryptography]
 asgiref
 loguru
 pytz
+redis
+rq
+rq-scheduler
