@@ -1,3 +1,5 @@
+"""基于 Loguru 的文件日志初始化。"""
+
 from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
@@ -12,10 +14,15 @@ BasePath = Path(__file__).resolve().parent.parent
 
 
 class Logger:
+    """创建日志目录，并配置 INFO 与 ERROR 两个日志输出。"""
     def __init__(self):
         self.log_path =os.path.join(BasePath,'logs')
 
     def log(self) -> loguru.Logger:
+        """返回已配置的 Loguru logger。
+
+        模块导入时会执行本方法，因此 logs/ 目录和日志 sink 会在应用启动前准备好。
+        """
         if not os.path.exists(self.log_path):
             os.mkdir(self.log_path)
 
@@ -45,4 +52,5 @@ class Logger:
         return logger
 
 
+# LoggerMiddleware 导入此对象后即可记录请求，不需要每次请求重复配置 sink。
 log = Logger().log()

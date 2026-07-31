@@ -37,3 +37,4 @@ egg-info/
 
 # Jupyter Notebook
 .ipynb_checkpoints/
+/.venv/

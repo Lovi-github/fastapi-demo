@@ -1,6 +1,8 @@
 
 # FastApi Example Project
 
+> [查看中文入门说明 / Read the Chinese guide](README.zh-CN.md)
+
 FastApi Example Project Structure
 
 ## Project Structure
