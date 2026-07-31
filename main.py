@@ -1,6 +1,7 @@
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.middlewares.loggerMiddleware import LoggerMiddleware
+from core.SingletonMeta import SingletonMeta
 
 
 from routes.api import router
