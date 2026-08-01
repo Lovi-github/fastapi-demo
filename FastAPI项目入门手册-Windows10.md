@@ -342,7 +342,7 @@ Get-ChildItem tests
 
 ## 阶段 8：Git 提交前固定动作
 
-- [ ] **学习目标**：每次提交前都知道“提交了什么”。
+- [x] **学习目标**：每次提交前都知道“提交了什么”。
 - **终端**：Windows PowerShell。
 - **命令**：
 
@@ -369,9 +369,9 @@ git log -1 --oneline
 
 ## 完成标志
 
-- [ ] 我能启动 Uvicorn。
-- [ ] 我能在 /docs 调用 POST /api/v1/login/。
-- [ ] 我能解释 /api/v1/login/ 如何由多个路由前缀拼出来。
-- [ ] 我能说清 Schema、Controller、Service、JWT 工具和日志中间件的职责。
-- [ ] 我知道 Docker/RQ 当前的作用和它们尚未实现的部分。
-- [ ] 我不会误把 .venv、.env 或日志提交到 Git。
+- [x] 我能启动 Uvicorn。
+- [x] 我能在 /docs 调用 POST /api/v1/login/。
+- [x] 我能解释 /api/v1/login/ 如何由多个路由前缀拼出来。
+- [x] 我能说清 Schema、Controller、Service、JWT 工具和日志中间件的职责。
+- [x] 我知道 Docker/RQ 当前的作用和它们尚未实现的部分。
+- [x] 我不会误把 .venv、.env 或日志提交到 Git。
