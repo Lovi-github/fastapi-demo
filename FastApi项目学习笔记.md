@@ -248,17 +248,108 @@ flowchart LR
 | `dependencies/dependency.py` | 未接入路由 | 用来了解 FastAPI 的 `Depends` 前置校验写法 |
 | `Database` / `UserService` | 启动时演示 | 不是实际数据库层 |
 | `database/` | 空目录 | 不能认为项目已接入数据库 |
-| Redis / RQ Worker | Compose 已配置 | 当前没有入队代码，Worker 等待任务正常 |
+| 🚩Redis / RQ Worker | Compose 已配置 | 当前没有入队代码，Worker 等待任务正常 |
 
 ## 15. Docker、Redis 与 RQ 要学到什么
 
-`docker-compose.yml` 定义了三个服务：
+### 15.1 整体定位
 
-- `app`：运行 Uvicorn 的 API 容器，对外暴露 `8000` 端口。
-- `redis`：提供队列和缓存可使用的 Redis 服务。
-- `worker`：执行 `rq worker --url redis://redis:6379 default`，等待 `default` 队列中的任务。
+Docker 不是本地启动的前置条件，而是后续容器化练习。前五个阶段用 `python -m uvicorn ...` 直接在 Windows 本地运行项目，阶段六则用 Docker 容器来运行整个项目，体验"生产环境"风格的部署。
 
-本机尚未安装 Docker Desktop，所以此部分应在完成本地启动后再按手册安装和验证。不要因为看到 Worker 就误以为登录接口会自动异步执行；当前代码没有调用 RQ 入队 API。
+### 15.2 Dockerfile：单个容器的打包说明书
+
+Dockerfile 告诉 Docker 怎么把项目变成一个可运行的容器镜像。它决定的是**"容器里有什么"**（环境、依赖、代码文件），而不是"容器启动后跑什么程序"。
+
+```dockerfile
+FROM python:3.11-slim-buster          # 基础镜像：精简的 Linux + Python 3.11
+ENV PYTHONDONTWRITEBYTECODE 1         # 不生成 .pyc 缓存文件（保持容器干净）
+ENV PYTHONUNBUFFERED 1                # Python 输出不被缓冲（方便看日志）
+WORKDIR /app                          # 容器内的工作目录
+COPY requirements.txt .               # 复制依赖清单进容器
+RUN pip install --no-cache-dir -r requirements.txt  # 安装 Python 依赖
+COPY . .                              # 复制项目所有代码进容器
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]  # 默认启动命令
+```
+
+### 15.3 docker-compose.yml：多个容器的编排表
+
+如果 Dockerfile 是**一个容器的说明书**，那 `docker-compose.yml` 就是**多个容器的编排表**。一条 `docker compose up --build` 命令就能同时构建镜像并启动所有容器。
+
+`docker compose up --build` 实际上做了两件事：
+
+1. **build**：先构建镜像（读 Dockerfile，装依赖，拷代码）。
+2. **up**：再启动容器（用构建好的镜像运行容器）。
+
+项目定义了三个服务（容器）：
+
+| 服务 | 镜像来源 | 启动后执行什么 | 角色 |
+| --- | --- | --- | --- |
+| `app` | 用 Dockerfile 本地构建 | `CMD` 里写的：`uvicorn main:app ...` | Web 服务器，接收 HTTP 请求 |
+| `worker` | 用**同一个** Dockerfile 本地构建 | `command` 覆盖为：`rq worker --url redis://redis:6379 default` | 后台任务处理器，从 Redis 取任务执行 |
+| `redis` | 直接从 Docker Hub 下载 `redis:alpine` 官方镜像 | Redis 自身默认启动命令 | 内存数据库 / 消息队列 |
+
+三个容器通过内部网络 `fast-api-network` 互相通信，不需要手动安装 Redis 或配置环境。
+
+### 15.4 关键概念：同一个镜像，不同的启动命令
+
+`app` 和 `worker` 用的是**同一个 Dockerfile**，构建出的是**同一个镜像**（里面什么都有——FastAPI 代码、RQ 代码、所有依赖）。区别只在于 `docker-compose.yml` 中 worker 的 `command` 字段覆盖了 Dockerfile 里的 `CMD`：
+
+- **app 容器**：执行 Dockerfile 默认的 `CMD`，启动 Uvicorn 当 Web 服务器。
+- **worker 容器**：`command: rq worker --url redis://redis:6379 default` 覆盖默认命令，启动 RQ Worker 监听 `default` 队列。
+
+打个比方：同一个镜像就像同一间装修好的厨房——灶台、锅碗、食材都一样。但厨师进门后，可以做完全不同的菜。
+
+### 15.5 worker 的命令在干什么
+
+```
+rq worker --url redis://redis:6379 default
+│  │      │                        │
+│  │      │                        └── 监听名为 "default" 的队列
+│  │      └── 连接到 Redis（地址是 redis 容器的 6379 端口）
+│  └── 启动一个 RQ Worker（后台任务处理器）
+└── RQ = Redis Queue，一个 Python 的轻量任务队列库
+```
+
+worker 启动后会一直等待 Redis 队列中的任务。当前项目没有 RQ 入队代码，所以 Worker 空闲等待属于正常状态。
+
+### 15.6 构建与启动的完整流程
+
+```
+执行 docker compose up --build
+    │
+    ├── 1. redis 服务：本地没有 redis:alpine 镜像？从 Docker Hub 下载
+    │
+    ├── 2. app 服务：读 Dockerfile → 装 Python → 装依赖 → 拷代码 → 构建出 app 镜像
+    │
+    ├── 3. worker 服务：用同一个 Dockerfile 构建（镜像和 app 一样）
+    │
+    └── 4. 三个镜像都就绪，启动三个容器，各自执行自己的启动命令
+```
+
+如果镜像已经构建过，再次执行 `docker compose up`（不带 `--build`）会直接复用已有镜像，跳过构建。`--build` 是强制"每次都重新构建"，适合改了代码之后用。
+
+停止容器：前台按 `Ctrl+C`；如需移除本项目容器和网络，执行 `docker compose down`（不会删除项目源码）。
+
+### 15.7 学习边界
+
+不要因为看到 Worker 就误以为登录接口会自动异步执行；当前代码没有调用 RQ 入队 API。
+
+### 15.8 阶段六实操验证记录
+
+Docker Desktop 已安装并配置镜像加速器（国内拉取 Docker Hub 镜像需要）。`docker compose up --build` 成功启动三个容器，验证结果：
+
+| 验证命令 | 预期结果 | 实际结果 |
+| --- | --- | --- |
+| `docker compose ps` | 三个容器均为 Up 状态 | ✅ app、redis、worker 全部运行 |
+| `docker compose exec redis redis-cli ping` | 返回 PONG | ✅ PONG |
+| `docker compose logs worker` | Worker 监听 default 队列 | ✅ Listening on default... |
+
+关键认知：
+
+- Worker 空闲等待是正常的，当前没有 RQ 入队代码。
+- `docker compose up` 不带 `--build` 可复用已有镜像，跳过构建。
+- 停止容器用 `Ctrl+C`（前台）或 `docker compose down`（移除容器和网络，不删源码）。
+- `docker-compose.yml` 中的 `version` 字段已被 Docker Compose 标记为过时，不影响功能，可忽略警告。
 
 ## 16. 测试现状与正确的下一步
 
@@ -277,3 +368,165 @@ flowchart LR
 5. 单独设计“最小 RQ 入队任务”练习，再决定是否新增接口。
 
 以上练习都属于后续改动：先讨论、你确认后再做，不直接改动本轮的演示登录逻辑。
+噢您好呀唉。
+## 18. Python 基础语法：`self`、对象创建与类的高级特性
+
+### 18.1 `self` 是什么
+
+`self` 是类的实例方法中对**当前对象实例**的引用，类似于 Java 中的 `this`。
+
+```python
+class Database:
+    def __init__(self):
+        self.connection_string = "Database Connection Established"  # 赋值：把值存到对象里
+
+    def connect(self):
+        return self.connection_string  # 取值：把之前存的值返回
+```
+
+- `__init__` 中的 `self.connection_string = ...` 是**赋值**，把值绑定到当前对象。
+- `connect` 中的 `return self.connection_string` 是**取值并返回**。
+
+一个类可以被实例化多次，每次创建的实例都是独立的：
+
+```python
+db1 = Database()
+db2 = Database()
+```
+
+调用 `db1.connect()` 时，Python 自动把 `db1` 作为 `self` 传入，因此 `self.connection_string` 访问的是 `db1` 的属性，而不是 `db2` 的。
+
+`self` 不是 Python 关键字，只是社区约定。写成 `this` 也能运行，但没人这么做。
+
+### 18.2 `self` 是谁传的
+
+`self` 由 **Python 解释器自动传入**，不需要手动传递。
+
+```python
+# 以下两种写法完全等价
+db.connect()            # Python 自动把 db 作为 self 传入
+Database.connect(db)    # 手动把 db 作为 self 传入
+```
+
+创建实例 `db = Database()` 时：
+
+1. Python 在内存中创建一个新的 `Database` 对象。
+2. Python 自动调用 `__init__(self)`，并自动把刚创建的对象作为 `self` 传入。
+3. `self.connection_string = "..."` 把属性绑定到这个新对象上。
+
+### 18.3 Python 创建对象不需要 `new`
+
+Python 创建对象直接 `类名()`，不需要 `new` 关键字：
+
+| 语言 | 创建对象语法 |
+| --- | --- |
+| Java | `Database db = new Database();` |
+| Python | `db = Database()` |
+
+括号的作用是调用类的构造函数（触发 `__init__` 方法）。
+
+其他常见基础语法对比：
+
+```python
+# 变量声明（不需要指定类型，不需要分号）
+name = "张三"
+age = 25
+is_active = True
+
+# 列表（类似 Java 的 ArrayList）
+fruits = ["apple", "banana"]
+
+# 字典（类似 Java 的 HashMap）
+user = {"name": "张三", "age": 25}
+
+# 条件判断（不需要括号，用缩进代替花括号）
+if age > 18:
+    print("成年")
+else:
+    print("未成年")
+
+# 循环
+for fruit in fruits:
+    print(fruit)
+```
+
+### 18.4 `metaclass=SingletonMeta` 是什么意思
+
+`class Database(metaclass=SingletonMeta)` 中的 `metaclass=` **不是继承**，而是指定"元类"。
+
+| 概念 | 作用 | 类比 |
+| --- | --- | --- |
+| 类 | 定义对象的属性和行为 | 做月饼的模具 |
+| 继承 | 子类复用父类的代码 | 儿子继承父亲的财产 |
+| 元类 | 控制"类"本身的创建和行为 | 做模具的模具 |
+
+`SingletonMeta` 是一个**单例元类**，它的作用是：让这个类只能创建一个实例，无论调用多少次 `Database()`。
+
+```python
+# 有 SingletonMeta 单例元类
+db1 = Database()
+db2 = Database()
+print(db1 is db2)  # True！是同一个对象，共用同一份数据
+```
+
+数据库连接这种资源全局只需要一个，用单例避免重复创建浪费资源。
+
+### 18.5 什么时候方法参数要写 `self`
+
+| 情况 | 是否写 self | 说明 |
+| --- | --- | --- |
+| 实例方法（操作具体对象的） | ✅ 要写 | `def connect(self):` |
+| 类方法（操作类本身的） | ❌ 写 `cls`，加 `@classmethod` | `@classmethod` / `def create(cls):` |
+| 静态方法（跟类/对象都没关系） | ❌ 不写，加 `@staticmethod` | `@staticmethod` / `def helper():` |
+
+**判断标准**：这个方法需要访问"这个对象"自己的属性或方法吗？需要就写 `self`，不需要就不写。
+
+```python
+class Calculator:
+    # 实例方法：需要访问对象的值
+    def get_value(self):
+        return self.value
+
+    # 静态方法：纯计算，跟对象无关
+    @staticmethod
+    def add(a, b):
+        return a + b
+```
+
+### 18.6 Python 类可以动态添加属性
+
+Python 不需要在类中提前声明属性，可以直接给对象赋值：
+
+```java
+// Java：必须先声明属性，否则编译报错
+Database db = new Database();
+db.newField = "xxx";  // ❌ 编译错误
+```
+
+```python
+# Python：不需要提前声明，随时可以加属性
+db = Database()
+db.new_field = "xxx"  # ✅ 完全合法，动态添加了一个新属性
+print(db.new_field)   # 输出: xxx
+```
+
+| 特性 | Java | Python |
+| --- | --- | --- |
+| 类型检查 | 编译时检查，属性必须提前声明 | 运行时动态，随时可以加 |
+| 属性定义 | 必须在类里声明 | 可以在 `__init__` 里"用出来"，也可以随时加 |
+
+虽然 Python 允许动态添加属性，但好的做法还是**在 `__init__` 里统一声明所有属性**，让代码清晰可读：
+
+```python
+# ✅ 推荐
+class Database:
+    def __init__(self):
+        self.connection_string = None
+        self.timeout = 30
+        self.is_connected = False
+
+# ❌ 不推荐：到处乱加属性，别人不知道有哪些
+db = Database()
+db.connection_string = "..."
+db.extra_field = "???"  # 突然冒出来一个，很混乱
+```
